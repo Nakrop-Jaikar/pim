@@ -1,0 +1,91 @@
+import cv2
+import mediapipe as mp
+
+# ตั้งค่า MediaPipe
+mp_hands = mp.solutions.hands
+mp_pose = mp.solutions.pose
+mp_drawing = mp.solutions.drawing_utils
+
+# ตัวแปรสำหรับนับจำนวนครั้งและเซ็ต
+count = 0
+sets = 0
+pose_detected = False  # กำหนดค่าเริ่มต้น
+
+# เปิดกล้อง
+cap = cv2.VideoCapture(0)
+
+# ใช้โมเดลตรวจจับมือและร่างกาย
+with mp_hands.Hands(min_detection_confidence=0.7, min_tracking_confidence=0.5) as hands, \
+     mp_pose.Pose(min_detection_confidence=0.7, min_tracking_confidence=0.5) as pose:
+    
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        # แปลงภาพเป็น RGB
+        image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # ตรวจจับมือ
+        hand_results = hands.process(image)
+        
+        # ตรวจจับร่างกาย
+        pose_results = pose.process(image)
+
+        # เปลี่ยนกลับมาเป็น BGR เพื่อแสดงผล
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        
+        # วาดเส้นโครงร่างกาย
+        if pose_results.pose_landmarks:
+            mp_drawing.draw_landmarks(image, pose_results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
+
+        # ตรวจจับข้อนิ้วมือ
+        if hand_results.multi_hand_landmarks:
+            for hand_landmarks in hand_results.multi_hand_landmarks:
+                # วาดมือและข้อต่อ
+                mp_drawing.draw_landmarks(image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+                
+                # ตรวจสอบตำแหน่งข้อนิ้วมือ
+                thumb_tip_y = hand_landmarks.landmark[4].y
+                index_tip_y = hand_landmarks.landmark[8].y
+                middle_tip_y = hand_landmarks.landmark[12].y
+                ring_tip_y = hand_landmarks.landmark[16].y
+                pinky_tip_y = hand_landmarks.landmark[20].y
+                
+                # เช็คว่าทั้งห้านิ้วยกขึ้นจากการกำปั้น
+                if (thumb_tip_y < hand_landmarks.landmark[3].y and
+                    index_tip_y < hand_landmarks.landmark[6].y and
+                    middle_tip_y < hand_landmarks.landmark[10].y and
+                    ring_tip_y < hand_landmarks.landmark[14].y and
+                    pinky_tip_y < hand_landmarks.landmark[18].y):
+                    if not pose_detected:
+                        count += 1
+                        print(f"Count: {count}")
+                        pose_detected = True  # ตั้งสถานะเป็นตรวจจับท่าถูกต้องแล้ว
+                        
+                    # เช็คว่าครบ 6 ครั้งหรือไม่
+                    if count >= 6:
+                        sets += 1
+                        count = 0
+                        print(f"Sets: {sets}")
+                        
+                        # หยุดการทำงานเมื่อครบ 3 เซ็ต
+                        if sets >= 3:
+                            cap.release()
+                            cv2.destroyAllWindows()
+                            print("ครบ 3 เซ็ตแล้ว หยุดการทำงาน")
+                            break
+                else:
+                    pose_detected = False  # รีเซ็ตสถานะเมื่อท่าไม่ถูกต้อง
+
+        # แสดงผลลัพธ์
+        cv2.putText(image, f"Sets: {sets}", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        cv2.putText(image, f"Count: {count}", (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        cv2.imshow("Hand and Pose Detection", image)
+        
+        # กด 'q' เพื่อหยุด
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+cap.release()
+cv2.destroyAllWindows()

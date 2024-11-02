@@ -1,0 +1,121 @@
+import cv2
+import mediapipe as mp
+import numpy as np
+
+# ตั้งค่า Mediapipe สำหรับการตรวจจับมือและท่าทาง
+mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
+mp_pose = mp.solutions.pose
+
+# สร้างอินสแตนซ์สำหรับตรวจจับมือและท่าทาง
+hands = mp_hands.Hands(max_num_hands=2)
+pose = mp_pose.Pose()
+
+# ตั้งค่ากล้อง
+cap = cv2.VideoCapture(0)
+
+# ตัวแปรนับคะแนนและเซ็ต
+score = 0
+sets = 0
+pose_detected = False  # สถานะการตรวจจับท่าถูกต้อง
+current_pose = "Palm Opening"  # ท่าผายมือเป็นท่าเริ่มต้น
+max_sets = 3  # จำนวนเซ็ตที่ต้องการให้ทำ
+exercise_complete = False  # สถานะเมื่อทำครบทุกท่าแล้ว
+
+def calculate_angle(a, b, c):
+    """คำนวณมุมระหว่างจุดสามจุด (a, b, c)"""
+    a = np.array(a)  # ข้อศอก
+    b = np.array(b)  # ไหล่
+    c = np.array(c)  # ข้อมือ
+
+    radians = np.arctan2(c[1] - b[1], c[0] - b[0]) - np.arctan2(a[1] - b[1], a[0] - b[0])
+    angle = np.abs(radians * 180.0 / np.pi)
+
+    if angle > 180.0:
+        angle = 360 - angle
+
+    return angle
+
+while cap.isOpened() and not exercise_complete:
+    ret, frame = cap.read()
+    if not ret:
+        break
+    
+    # แปลงภาพเป็น RGB
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    
+    # ใช้ Mediapipe ตรวจจับมือและท่าทาง
+    result_hands = hands.process(frame_rgb)
+    result_pose = pose.process(frame_rgb)
+    
+    # ตรวจจับท่าทางจาก Mediapipe Pose
+    if result_pose.pose_landmarks:
+        landmarks = result_pose.pose_landmarks.landmark
+        
+        # ดึงตำแหน่งของข้อต่อที่เกี่ยวข้อง
+        shoulder = [landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER].x, landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER].y]
+        elbow = [landmarks[mp_pose.PoseLandmark.RIGHT_ELBOW].x, landmarks[mp_pose.PoseLandmark.RIGHT_ELBOW].y]
+        wrist = [landmarks[mp_pose.PoseLandmark.RIGHT_WRIST].x, landmarks[mp_pose.PoseLandmark.RIGHT_WRIST].y]
+
+        # คำนวณมุมระหว่างไหล่, ข้อศอก และข้อมือ
+        angle = calculate_angle(elbow, shoulder, wrist)
+
+        # แสดงมุมที่คำนวณได้บนภาพ
+        cv2.putText(frame, str(int(angle)), 
+                    tuple(np.multiply(shoulder, [640, 480]).astype(int)), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA
+                    )
+        
+        # เงื่อนไขสำหรับท่าผายมือ
+        if current_pose == "Palm Opening":
+            cv2.putText(frame, "Current Pose: Palm Opening", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            if 85 <= angle <= 95:
+                if not pose_detected:
+                    score += 1  # เพิ่มคะแนนเมื่อแขนงอทำท่า 90 องศา
+                    pose_detected = True
+            elif angle >= 175:
+                pose_detected = False  # รีเซ็ตสถานะเมื่อแขนกลับไปที่ 180 องศา
+            
+            # นับเซ็ตเมื่อทำครบ 3 ครั้ง
+            if score >= 3:
+                sets += 1
+                score = 0  # รีเซ็ตคะแนนสำหรับเซ็ตถัดไป
+                cv2.putText(frame, f"Set Completed! Sets: {sets}", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+            
+            # เมื่อทำท่าผายมือครบ 3 เซ็ต ให้เปลี่ยนเป็นท่าหักข้อมือลง
+            if sets >= max_sets:
+                current_pose = "Arm Stretch and Wrist Bend"
+                sets = 0  # รีเซ็ตเซ็ตสำหรับท่าถัดไป
+
+        # เงื่อนไขสำหรับท่ายืดแขนและหักข้อมือลง
+        elif current_pose == "Arm Stretch and Wrist Bend":
+            cv2.putText(frame, "Current Pose: Arm Stretch and Wrist Bend", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            
+            # ตรวจจับท่ายืดแขนออกนอกลำตัว (ให้มุมมากกว่า 160 องศา)
+            if angle > 160:
+                if not pose_detected:
+                    score += 1  # เพิ่มคะแนนเมื่อแขนยืด
+                    pose_detected = True
+            elif angle <= 90:  # รีเซ็ตสถานะเมื่อแขนงอ
+                pose_detected = False
+
+            # นับเซ็ตเมื่อทำครบ 3 ครั้ง
+            if score >= 3:
+                sets += 1
+                score = 0  # รีเซ็ตคะแนนสำหรับเซ็ตถัดไป
+                cv2.putText(frame, f"Set Completed! Sets: {sets}", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+
+            # เมื่อทำครบ 3 เซ็ตให้แสดงข้อความว่าออกกำลังกายเสร็จสิ้น
+            if sets >= max_sets:
+                exercise_complete = True
+                cv2.putText(frame, "Exercise Completed!", (50, 200), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 255, 255), 3)
+
+    # แสดงภาพ
+    cv2.imshow("Image", frame)
+
+    # กด 'q' เพื่อออกจากโปรแกรม
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()

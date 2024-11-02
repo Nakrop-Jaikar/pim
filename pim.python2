@@ -1,0 +1,34 @@
+import cv2
+import mediapipe as mp
+
+# Initialize MediaPipe Pose
+mp_pose = mp.solutions.pose
+pose = mp_pose.Pose()
+
+# Initialize Video Capture
+cap = cv2.VideoCapture(0)
+
+while cap.isOpened():
+    success, image = cap.read()
+    if not success:
+        break
+
+    # Convert the BGR image to RGB
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+    # Process the image and detect pose
+    results = pose.process(image_rgb)
+
+    # Draw pose landmarks on the image
+    if results.pose_landmarks:
+        mp.solutions.drawing_utils.draw_landmarks(
+            image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
+
+    # Display the image
+    cv2.imshow('Pose Detection', image)
+
+    if cv2.waitKey(5) & 0xFF == 27:  # Press 'Esc' to exit
+        break
+
+cap.release()
+cv2.destroyAllWindows()

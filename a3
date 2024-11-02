@@ -1,0 +1,85 @@
+import cv2
+import mediapipe as mp
+
+# ตั้งค่า MediaPipe
+mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
+
+# ตัวแปรสำหรับนับจำนวนครั้งและเซ็ต
+count = 0
+sets = 0
+max_sets = 3
+hand_open = False  # ตัวแปรสำหรับตรวจสอบสถานะเปิดของมือ
+
+# เปิดกล้อง
+cap = cv2.VideoCapture(0)
+
+# ใช้โมเดลตรวจจับมือ
+with mp_hands.Hands(min_detection_confidence=0.7, min_tracking_confidence=0.5) as hands:
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        # แปลงภาพเป็น RGB
+        image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # ตรวจจับมือ
+        results = hands.process(image)
+        
+        # เปลี่ยนกลับมาเป็น BGR เพื่อแสดงผล
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        
+        # ตรวจจับข้อนิ้วมือ
+        if results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+                # วาดมือและข้อต่อ
+                mp_drawing.draw_landmarks(image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+                
+                # ตรวจสอบตำแหน่งข้อนิ้วมือ
+                thumb_tip_y = hand_landmarks.landmark[4].y
+                index_tip_y = hand_landmarks.landmark[8].y
+                middle_tip_y = hand_landmarks.landmark[12].y
+                ring_tip_y = hand_landmarks.landmark[16].y
+                pinky_tip_y = hand_landmarks.landmark[20].y
+                
+                # เช็คว่าทั้งห้านิ้วยกขึ้นจากการกำปั้น
+                if (thumb_tip_y < hand_landmarks.landmark[3].y and
+                    index_tip_y < hand_landmarks.landmark[6].y and
+                    middle_tip_y < hand_landmarks.landmark[10].y and
+                    ring_tip_y < hand_landmarks.landmark[14].y and
+                    pinky_tip_y < hand_landmarks.landmark[18].y):
+                    
+                    # หากมือเปิด (ท่าไม่กำปั้น) ให้เพิ่มคะแนน
+                    if not hand_open:
+                        count += 1
+                        hand_open = True
+                        print(f"Count: {count}")
+                        
+                        # เช็คว่าครบ 6 ครั้งหรือไม่
+                        if count >= 6:
+                            sets += 1
+                            count = 0
+                            print(f"Sets: {sets}")
+                            
+                            # เช็คว่าครบ 3 เซ็ตหรือไม่
+                            if sets >= max_sets:
+                                print("Complete 3 sets!")
+                                cap.release()
+                                cv2.destroyAllWindows()
+                                break
+                else:
+                    # ตั้งสถานะมือกลับท่าเริ่มต้น (กำปั้น)
+                    hand_open = False
+
+        # แสดงผลลัพธ์
+        cv2.putText(image, f"Sets: {sets}", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        cv2.putText(image, f"Count: {count}", (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        cv2.imshow("Hand Detection", image)
+        
+        # กด 'q' เพื่อหยุด
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+cap.release()
+cv2.destroyAllWindows()

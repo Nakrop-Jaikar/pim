@@ -1,0 +1,101 @@
+from cvzone import FPS
+import cv2
+import mediapipe as mp
+import absl.logging
+
+# ปิดการแสดงข้อความแจ้งเตือนของ absl
+absl.logging.set_verbosity(absl.logging.ERROR)
+
+# ตั้งค่า Mediapipe สำหรับการตรวจจับมือและท่าทาง
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(max_num_hands=2)
+mp_drawing = mp.solutions.drawing_utils
+mp_pose = mp.solutions.pose
+
+# ตั้งค่ากล้อง
+cap = cv2.VideoCapture(0)
+
+# ตัวแปรนับคะแนนและเซ็ต
+score = 0
+sets = 0
+pose_detected = False  # สถานะการตรวจจับท่าถูกต้อง
+movement_threshold = 0.5  # กำหนดค่าความเปลี่ยนแปลงที่ถือว่ามีการเคลื่อนไหว
+
+# ตัวแปรสำหรับเก็บตำแหน่งก่อนหน้า
+prev_hand_landmarks = None
+prev_elbow_x = None
+
+# ตัวแปร Mediapipe สำหรับการตรวจจับท่าทาง
+pose = mp_pose.Pose()
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+    
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    
+    # ใช้ Mediapipe ตรวจจับมือและท่าทาง
+    result_hands = hands.process(frame_rgb)
+    result_pose = pose.process(frame_rgb)
+    
+    if result_hands.multi_hand_landmarks and result_pose.pose_landmarks:
+        for hand_landmarks in result_hands.multi_hand_landmarks:
+            mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+
+            # ตำแหน่งของมือ (WRIST) และนิ้ว
+            wrist_x = hand_landmarks.landmark[mp_hands.HandLandmark.WRIST].x
+            middle_finger_tip_x = hand_landmarks.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_TIP].x
+            index_finger_tip_x = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP].x
+            pinky_tip_x = hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_TIP].x
+            
+            # ตรวจสอบท่าทางของแขนจาก Mediapipe Pose (เช่น ข้อศอกยกอยู่ด้านข้าง)
+            elbow_x = result_pose.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_ELBOW].x
+            shoulder_x = result_pose.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_SHOULDER].x
+
+            # เงื่อนไขว่าข้อศอกยกอยู่ด้านข้าง และนิ้วและข้อมือยกขึ้น
+            arm_position_correct = elbow_x < shoulder_x  # ตรวจสอบว่าข้อศอกอยู่ทางซ้ายของไหล่
+            hand_up = wrist_x < middle_finger_tip_x and wrist_x < index_finger_tip_x and wrist_x < pinky_tip_x
+
+            # ตรวจสอบการเคลื่อนไหว (ถ้ามีตำแหน่งก่อนหน้า)
+            movement_detected = False
+            if prev_hand_landmarks is not None and prev_elbow_x is not None:
+                # คำนวณการเปลี่ยนแปลงระหว่างตำแหน่งปัจจุบันกับตำแหน่งก่อนหน้า
+                hand_movement = abs(prev_hand_landmarks.landmark[mp_hands.HandLandmark.WRIST].x - wrist_x)
+                elbow_movement = abs(prev_elbow_x - elbow_x)
+                
+                # ถ้าการเปลี่ยนแปลงมากกว่า threshold ให้ถือว่ามีการเคลื่อนไหว
+                if hand_movement > movement_threshold or elbow_movement > movement_threshold:
+                    movement_detected = True
+
+            # ถ้าท่าถูกต้องทั้งแขนและมือ และมีการเคลื่อนไหวและยังไม่ได้ถูกตรวจจับในรอบนี้
+            if arm_position_correct and hand_up and movement_detected and not pose_detected:
+                cv2.putText(frame, "Pose Detected", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                score += 1  # เพิ่มคะแนนเมื่อท่าทางถูกต้อง
+                pose_detected = True  # เปลี่ยนสถานะเมื่อท่าถูกตรวจจับแล้ว
+                cv2.putText(frame, f"Score: {score}", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+
+            # ถ้าท่าทางไม่ถูกต้องให้รีเซ็ตสถานะ
+            if not arm_position_correct or not hand_up:
+                pose_detected = False  # รีเซ็ตสถานะเมื่อท่าทางไม่ถูกต้อง
+
+            # เก็บตำแหน่งปัจจุบันไว้ใช้เปรียบเทียบใน frame ถัดไป
+            prev_hand_landmarks = hand_landmarks
+            prev_elbow_x = elbow_x
+
+    # เช็คถ้าคะแนนครบ 12 จะเพิ่มเซ็ต
+    if score >= 12:
+        sets += 1  # เพิ่มเซ็ต
+        score = 0  # รีเซ็ตคะแนนกลับเป็น 0 เพื่อเริ่มเซ็ตใหม่
+        cv2.putText(frame, f"Set Completed! Total Sets: {sets}", (50, 150), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+
+    # แสดงภาพที่ได้พร้อมจำนวนเซ็ต
+    cv2.putText(frame, f"Sets: {sets}", (50, 200), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+    cv2.imshow("Image", frame)
+
+    # กด 'q' เพื่อออกจากโปรแกรม
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
