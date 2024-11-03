@@ -1,0 +1,162 @@
+import cv2
+import mediapipe as mp
+import numpy as np
+
+# ตั้งค่า Mediapipe สำหรับการตรวจจับท่าทาง
+mp_pose = mp.solutions.pose
+mp_drawing = mp.solutions.drawing_utils
+mp_drawing_styles = mp.solutions.drawing_styles
+mp_hands = mp.solutions.hands
+
+# ตั้งค่ากล้อง
+cap = cv2.VideoCapture(0)
+
+# ตัวแปรสำหรับนับคะแนนและสถานะ
+count = 0
+mark = 0
+score = 0
+sets = 0
+kit = 0
+series = 0
+pose_detected = False 
+max_sets = 3 
+max_mark = 3
+max_series = 3
+exercise_complete = False
+hand_open = False  # ประกาศตัวแปร hand_open
+
+# ตัวแปรสถานะของแต่ละท่า
+pose_complete = False
+mark_complete = False
+series_complete = False
+
+def calculate_distance(a, b):
+    """คำนวณระยะห่างระหว่างจุดสองจุด (a, b)"""
+    a = np.array(a)
+    b = np.array(b)
+    return np.linalg.norm(a - b)
+
+def check_finger_position(finger, elbow):
+    """ฟังก์ชันตรวจสอบว่านิ้วหักลงด้านล่างหรือไม่"""
+    return finger[1] > elbow[1]
+
+while cap.isOpened() and not exercise_complete:
+    ret, frame = cap.read()
+    if not ret:
+        print("ไม่สามารถเข้าถึงกล้องได้")
+        break
+
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+    # สร้าง instance ของ Pose และ Hands ในแต่ละเฟรมเพื่อลดการใช้งานทรัพยากร
+    with mp_pose.Pose() as pose, mp_hands.Hands() as hands:
+        result_pose = pose.process(frame_rgb)
+        results = hands.process(frame_rgb)
+
+        if result_pose.pose_landmarks:
+            landmarks = result_pose.pose_landmarks.landmark
+            
+            mp_drawing.draw_landmarks(
+                frame, 
+                result_pose.pose_landmarks, 
+                mp_pose.POSE_CONNECTIONS,
+                landmark_drawing_spec=mp_drawing_styles.get_default_pose_landmarks_style()
+            )
+            
+            # ท่าที่ 1: Arm moved to the front
+            if not pose_complete:
+                shoulder_right = [landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER].x, landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER].y]
+                elbow_right = [landmarks[mp_pose.PoseLandmark.RIGHT_ELBOW].x, landmarks[mp_pose.PoseLandmark.RIGHT_ELBOW].y]
+                wrist_right = [landmarks[mp_pose.PoseLandmark.RIGHT_WRIST].x, landmarks[mp_pose.PoseLandmark.RIGHT_WRIST].y]
+            
+                wrist_to_shoulder_distance = calculate_distance(wrist_right, shoulder_right)
+                elbow_to_shoulder_distance = calculate_distance(elbow_right, shoulder_right)
+            
+                if wrist_right[0] < shoulder_right[0] and wrist_to_shoulder_distance < elbow_to_shoulder_distance:
+                    cv2.putText(frame, "Arm moved to the front", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    if not pose_detected:
+                        score += 1  
+                        pose_detected = True  
+                else:
+                    pose_detected = False 
+            
+                if score >= 12:
+                    sets += 1
+                    score = 0  
+                    cv2.putText(frame, f"Set Completed! Sets: {sets}", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+
+                cv2.putText(frame, f"Sets: {sets}", (50, 150), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+
+                if sets >= max_sets:
+                    pose_complete = True
+
+        # ท่าที่ 2: Finger bent down (ทำเมื่อ pose_complete = True)
+        if pose_complete and not mark_complete:
+            elbow_right = [landmarks[mp_pose.PoseLandmark.RIGHT_ELBOW].x, landmarks[mp_pose.PoseLandmark.RIGHT_ELBOW].y]
+            finger_right = [landmarks[mp_pose.PoseLandmark.RIGHT_INDEX].x, landmarks[mp_pose.PoseLandmark.RIGHT_INDEX].y]
+
+            if check_finger_position(finger_right, elbow_right):
+                cv2.putText(frame, "Finger bent down", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3, cv2.LINE_AA)
+                cv2.rectangle(frame, (30, 30), (400, 80), (0, 255, 0), 2)
+                if not pose_detected:
+                    score += 1  
+                    pose_detected = True  
+            else:
+                pose_detected = False  
+
+            if score >= 4:
+                mark += 1
+                score = 0
+                cv2.putText(frame, f"Mark Completed! Marks: {mark}", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 3, cv2.LINE_AA)
+                cv2.rectangle(frame, (30, 80), (400, 130), (0, 255, 255), 2)
+
+            cv2.rectangle(frame, (40, 130), (260, 170), (50, 50, 200), -1)
+            cv2.putText(frame, f"Marks: {mark}", (50, 150), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
+
+            if mark >= max_mark:
+                mark_complete = True
+
+        # ท่าที่ 3: มือกางออก (ทำเมื่อ mark_complete = True)
+        if mark_complete and not series_complete and results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+                mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+
+                thumb_tip_y = hand_landmarks.landmark[4].y
+                index_tip_y = hand_landmarks.landmark[8].y
+                middle_tip_y = hand_landmarks.landmark[12].y
+                ring_tip_y = hand_landmarks.landmark[16].y
+                pinky_tip_y = hand_landmarks.landmark[20].y
+                
+                if (thumb_tip_y < hand_landmarks.landmark[3].y and
+                    index_tip_y < hand_landmarks.landmark[6].y and
+                    middle_tip_y < hand_landmarks.landmark[10].y and
+                    ring_tip_y < hand_landmarks.landmark[14].y and
+                    pinky_tip_y < hand_landmarks.landmark[18].y):
+                    
+                    if not hand_open:
+                        kit += 1
+                        hand_open = True
+                        
+                        if kit >= 6:
+                            series += 1
+                            kit = 0
+                            if series >= max_series:
+                                print("Complete 3 series!")
+                                series_complete = True
+                                exercise_complete = True
+                                break
+                else:
+                    hand_open = False
+
+        # แสดงผลลัพธ์
+        cv2.putText(frame, f"Series: {series}", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        cv2.putText(frame, f"Kit: {kit}", (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+    # แสดงภาพจากกล้อง
+    cv2.imshow("Image", frame)
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
