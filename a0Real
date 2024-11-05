@@ -80,7 +80,7 @@ while cap.isOpened() and not exercise_complete:
                 else:
                     pose_detected = False 
             
-                if score >= 12:
+                if score >= 6:
                     sets += 1
                     score = 0  
                     cv2.putText(frame, f"Set Completed! Sets: {sets}", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
@@ -104,9 +104,9 @@ while cap.isOpened() and not exercise_complete:
             else:
                 pose_detected = False  
 
-            if score >= 4:
+            if count >= 6:
                 mark += 1
-                score = 0
+                count = 0
                 cv2.putText(frame, f"Mark Completed! Marks: {mark}", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 3, cv2.LINE_AA)
                 cv2.rectangle(frame, (30, 80), (400, 130), (0, 255, 255), 2)
 
